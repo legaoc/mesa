@@ -49,18 +49,19 @@
   height: 100dvh;
   min-height: 0;
   grid-template-columns: 1fr;
-  grid-template-rows: auto minmax(0, 1fr) auto auto;
+  grid-template-rows: auto minmax(0, 1fr) auto;
   grid-template-areas:
     "head"
     "stage"
-    "catalog"
-    "inspector";
+    "dock";
   background: var(--color-paper);
   overflow: hidden;
 }
 
 .head {
   grid-area: head;
+  padding-top: max(0.7rem, env(safe-area-inset-top));
+  padding-bottom: 0.7rem;
 }
 
 .stage {
@@ -139,16 +140,67 @@
   border-color: var(--color-ink);
 }
 
-.catalog {
-  grid-area: catalog;
+.dock {
+  grid-area: dock;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
   background: var(--color-sheet);
   border-top: 1px solid var(--color-rule);
+}
+
+.sheet {
+  max-height: min(42dvh, 24rem);
+  overflow: auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+.sheet.is-shut {
+  display: none;
+}
+
+.tabbar {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border-top: 1px solid var(--color-rule);
+  background: var(--color-sheet);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.tabbar button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.12rem;
+  min-height: 3.4rem;
+  border: 0;
+  background: transparent;
+  color: var(--color-mute);
+  font-size: 0.68rem;
+  font-weight: 560;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.tabbar button[aria-selected="true"] {
+  color: var(--color-ink);
+}
+
+.tabbar svg {
+  width: 1.2rem;
+  height: 1.2rem;
+}
+
+.catalog {
+  background: var(--color-sheet);
   display: flex;
   flex-direction: column;
   gap: 0.45rem;
-  overflow-x: hidden;
-  overflow-y: hidden;
-  padding: 0.65rem 1rem;
+  overflow: hidden;
+  padding: 0.7rem 1rem 0.85rem;
 }
 
 .group {
@@ -164,9 +216,15 @@
   display: none;
 }
 
+.group,
+.group-open {
+  min-width: 0;
+}
+
 .group-items {
   display: flex;
   gap: 0.5rem;
+  min-width: 0;
   overflow-x: auto;
 }
 
@@ -218,15 +276,11 @@
 }
 
 .inspector {
-  grid-area: inspector;
   background: var(--color-sheet);
-  border-top: 1px solid var(--color-rule);
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 0.75rem;
-  padding: 0.75rem 1rem 1rem;
-  max-height: 15.5rem;
-  overflow: auto;
+  gap: 0.85rem;
+  padding: 0.85rem 1rem 1rem;
 }
 
 .span-2 {
@@ -392,110 +446,28 @@
 }
 
 @media (max-width: 959px) {
-  .studio {
-    grid-template-rows: auto minmax(0, 1fr) auto minmax(0, 16.5rem);
-  }
-
-  .catalog {
-    padding-top: 0.55rem;
-    padding-bottom: 0.55rem;
-  }
-
-  .inspector {
-    max-height: none;
-    height: 100%;
-    min-height: 0;
-    overflow: auto;
-  }
-
   .stage {
     padding: 0.5rem 0.75rem;
   }
 }
 
 @media (min-width: 960px) {
-  .studio {
-    grid-template-columns: 17rem minmax(0, 1fr) 19rem;
-    grid-template-rows: auto minmax(0, 1fr);
-    grid-template-areas:
-      "head head head"
-      "catalog stage inspector";
+  .sheet {
+    max-height: min(38dvh, 22rem);
   }
 
-  .catalog {
-    flex-direction: column;
-    overflow-x: hidden;
-    overflow-y: auto;
-    border-top: 0;
-    border-right: 1px solid var(--color-rule);
-    padding: 1rem 0.75rem 1.5rem;
-    gap: 1.1rem;
-  }
-
-  .section-tabs {
-    display: none;
-  }
-
-  .group,
-  .group-open {
-    display: block;
-  }
-
-  .group-label {
-    display: block;
-    margin: 0 0.4rem 0.45rem;
-    font-size: 0.68rem;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-    color: var(--color-mute);
+  .catalog,
+  .inspector {
+    width: min(100%, 76rem);
+    margin-inline: auto;
   }
 
   .group-items {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-    overflow: visible;
-  }
-
-  .item {
-    flex-direction: row;
-    width: 100%;
-    align-items: center;
-    gap: 0.7rem;
-    padding: 0.4rem;
-    text-align: left;
-  }
-
-  .item strong {
-    display: block;
-    font-size: 0.92rem;
-  }
-
-  .item em {
-    display: block;
-    font-style: normal;
-    font-size: 0.75rem;
-    color: var(--color-mute);
-  }
-
-  .item-on em {
-    color: color-mix(in srgb, var(--color-sheet) 72%, transparent);
-  }
-
-  .thumb {
-    width: 4.5rem;
-    height: 3.25rem;
+    flex-wrap: wrap;
   }
 
   .inspector {
-    display: flex;
-    flex-direction: column;
-    gap: 1.15rem;
-    max-height: none;
-    overflow: auto;
-    border-top: 0;
-    border-left: 1px solid var(--color-rule);
-    padding: 1.1rem 1rem 1.5rem;
+    grid-template-columns: 1fr 1fr 1fr;
   }
 
   .stage {

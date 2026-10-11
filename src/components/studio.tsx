@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { PhoneStage, type PhoneStageHandle } from "@/components/phone-stage";
 import { DEFAULT_POSE, drawPhoneThumb, type PhonePose } from "@/lib/phone-view";
-import { Download, RotateCcw, Upload } from "lucide-react";
+import { Download, LayoutGrid, RotateCcw, SlidersHorizontal, Upload } from "lucide-react";
 import {
   GROUPS,
   TEMPLATES,
@@ -53,6 +53,8 @@ export function Studio() {
   const [over, setOver] = useState(false);
   const [saved, setSaved] = useState<null | "escena" | "corte">(null);
   const [fontTick, setFontTick] = useState(0);
+  const [panel, setPanel] = useState<"modelos" | "opciones">("modelos");
+  const [sheetOpen, setSheetOpen] = useState(true);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
@@ -166,6 +168,14 @@ export function Studio() {
     setTemplateId(next.id);
     setSection(next.group);
     resetFrame();
+  }
+
+  function pickPanel(next: "modelos" | "opciones") {
+    if (panel === next) setSheetOpen((open) => !open);
+    else {
+      setPanel(next);
+      setSheetOpen(true);
+    }
   }
 
   function chooseSection(group: GroupId) {
@@ -285,11 +295,8 @@ export function Studio() {
 
   return (
     <div className="studio">
-      <header className="head flex items-center justify-between gap-3 border-b border-rule bg-sheet px-4 py-3">
-        <div className="min-w-0">
-          <h1 className="mark text-3xl text-ink">Mesa</h1>
-          <p className="truncate text-sm text-mute">Sección, modelo y PNG.</p>
-        </div>
+      <header className="head flex items-center justify-between gap-3 border-b border-rule bg-sheet px-4">
+        <h1 className="mark text-2xl text-ink">Mesa</h1>
         <div className="flex shrink-0 gap-2">
           <button type="button" className="btn" onClick={() => download(true)} disabled={!image}>
             {saved === "corte" ? "Listo" : "Sin fondo"}
@@ -300,50 +307,6 @@ export function Studio() {
           </button>
         </div>
       </header>
-
-      <nav className="catalog" aria-label="Marcos">
-        <div className="section-tabs" role="tablist" aria-label="Secciones">
-          {GROUPS.map((group) => (
-            <button
-              key={group}
-              type="button"
-              role="tab"
-              aria-selected={section === group}
-              onClick={() => chooseSection(group)}
-            >
-              {group}
-            </button>
-          ))}
-        </div>
-        {GROUPS.map((group) => (
-          <div className={section === group ? "group group-open" : "group"} key={group}>
-            <p className="group-label">{group}</p>
-            <div className="group-items">
-              {TEMPLATES.filter((item) => item.group === group).map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  className={item.id === templateId ? "item item-on" : "item"}
-                  aria-pressed={item.id === templateId}
-                  onClick={() => chooseTemplate(item.id)}
-                >
-                  <canvas
-                    className="thumb"
-                    ref={(node) => {
-                      thumbs.current[item.id] = node;
-                    }}
-                    aria-hidden="true"
-                  />
-                  <span>
-                    <strong>{item.name}</strong>
-                    <em>{item.dimensional ? "Gira y acerca" : "Modelo"}</em>
-                  </span>
-                </button>
-              ))}
-            </div>
-          </div>
-        ))}
-      </nav>
 
       <div
         className={over ? "stage is-over" : "stage"}
@@ -396,7 +359,53 @@ export function Studio() {
         )}
       </div>
 
-      <aside className="inspector">
+      <footer className="dock">
+        <div className={sheetOpen ? "sheet" : "sheet is-shut"}>
+      <nav className="catalog" hidden={panel !== "modelos"} aria-label="Marcos">
+        <div className="section-tabs" role="tablist" aria-label="Secciones">
+          {GROUPS.map((group) => (
+            <button
+              key={group}
+              type="button"
+              role="tab"
+              aria-selected={section === group}
+              onClick={() => chooseSection(group)}
+            >
+              {group}
+            </button>
+          ))}
+        </div>
+        {GROUPS.map((group) => (
+          <div className={section === group ? "group group-open" : "group"} key={group}>
+            <p className="group-label">{group}</p>
+            <div className="group-items">
+              {TEMPLATES.filter((item) => item.group === group).map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  className={item.id === templateId ? "item item-on" : "item"}
+                  aria-pressed={item.id === templateId}
+                  onClick={() => chooseTemplate(item.id)}
+                >
+                  <canvas
+                    className="thumb"
+                    ref={(node) => {
+                      thumbs.current[item.id] = node;
+                    }}
+                    aria-hidden="true"
+                  />
+                  <span>
+                    <strong>{item.name}</strong>
+                    <em>{item.dimensional ? "Gira y acerca" : "Modelo"}</em>
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
+      </nav>
+
+      <aside className="inspector" hidden={panel !== "opciones"}>
         <div className="span-2">
           <span className="field-label">Imagen</span>
           <div className="flex flex-wrap items-center gap-2">
@@ -600,6 +609,27 @@ export function Studio() {
           Descarga el PNG con la escena o sin fondo.
         </p>
       </aside>
+        </div>
+      <nav className="tabbar" aria-label="Menú">
+        <button
+          type="button"
+          aria-selected={sheetOpen && panel === "modelos"}
+          onClick={() => pickPanel("modelos")}
+        >
+          <LayoutGrid aria-hidden="true" />
+          Modelos
+        </button>
+        <button
+          type="button"
+          aria-selected={sheetOpen && panel === "opciones"}
+          onClick={() => pickPanel("opciones")}
+        >
+          <SlidersHorizontal aria-hidden="true" />
+          Opciones
+        </button>
+      </nav>
+      </footer>
+
     </div>
   );
 }
