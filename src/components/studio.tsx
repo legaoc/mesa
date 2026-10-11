@@ -8,6 +8,7 @@ import {
   templateById,
   type FinishId,
   type FitMode,
+  type GroupId,
   type SceneId,
 } from "@/lib/render-mockup";
 
@@ -33,24 +34,32 @@ const SAMPLES = [
 
 export function Studio() {
   const [templateId, setTemplateId] = useState(TEMPLATES[0]!.id);
+  const [section, setSection] = useState<GroupId>(TEMPLATES[0]!.group);
   const [scene, setScene] = useState<SceneId>("papel");
   const [finish, setFinish] = useState<FinishId>("grafito");
   const [fit, setFit] = useState<FitMode>("cover");
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [yaw, setYaw] = useState(26);
+  const [pitch, setPitch] = useState(14);
+  const [cut, setCut] = useState(false);
   const [image, setImage] = useState<HTMLImageElement | null>(null);
   const [imageName, setImageName] = useState("Patio");
   const [sampleId, setSampleId] = useState<string | null>("patio");
   const [error, setError] = useState("");
   const [over, setOver] = useState(false);
-  const [saved, setSaved] = useState(false);
+  const [saved, setSaved] = useState<null | "escena" | "corte">(null);
   const [fontTick, setFontTick] = useState(0);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const thumbs = useRef<Record<string, HTMLCanvasElement | null>>({});
-  const drag = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null);
+  const gesture = useRef<
+    | { kind: "pan"; x: number; y: number; panX: number; panY: number }
+    | { kind: "orbit"; x: number; y: number; yaw: number; pitch: number }
+    | null
+  >(null);
 
   const template = templateById(templateId);
 
@@ -78,10 +87,13 @@ export function Studio() {
     renderMockup(ctx, current.id, {
       scene,
       finish,
+      transparent: cut,
+      yaw,
+      pitch,
       art: { image, zoom, panX: pan.x, panY: pan.y, fit },
     });
     fitCanvas();
-  }, [templateId, scene, finish, zoom, pan, image, fit, fontTick, fitCanvas]);
+  }, [templateId, scene, finish, zoom, pan, image, fit, yaw, pitch, cut, fontTick, fitCanvas]);
 
   useEffect(() => {
     for (const item of TEMPLATES) {
@@ -96,11 +108,13 @@ export function Studio() {
       renderMockup(ctx, item.id, {
         scene,
         finish,
+        yaw,
+        pitch,
         quiet: true,
         art: { image, zoom: 1, panX: 0, panY: 0, fit: "cover" },
       });
     }
-  }, [image, scene, finish, fontTick]);
+  }, [image, scene, finish, yaw, pitch, fontTick]);
 
   useEffect(() => {
     const stage = stageRef.current;
@@ -144,7 +158,18 @@ export function Studio() {
   }
 
   function chooseTemplate(id: string) {
-    setTemplateId(id);
+    const next = templateById(id);
+    setTemplateId(next.id);
+    setSection(next.group);
+    resetFrame();
+  }
+
+  function chooseSection(group: GroupId) {
+    setSection(group);
+    if (template.group === group) return;
+    const first = TEMPLATES.find((item) => item.group === group);
+    if (!first) return;
+    setTemplateId(first.id);
     resetFrame();
   }
 
@@ -183,19 +208,32 @@ export function Studio() {
     img.src = url;
   }
 
-  function download() {
-    const canvas = canvasRef.current;
-    if (!canvas || !image) return;
-    canvas.toBlob((blob) => {
+  function download(transparent: boolean) {
+    if (!image) return;
+    const current = templateById(templateId);
+    const exportCanvas = document.createElement("canvas");
+    exportCanvas.width = current.w;
+    exportCanvas.height = current.h;
+    const ctx = exportCanvas.getContext("2d");
+    if (!ctx) return;
+    renderMockup(ctx, current.id, {
+      scene,
+      finish,
+      transparent,
+      yaw,
+      pitch,
+      art: { image, zoom, panX: pan.x, panY: pan.y, fit },
+    });
+    exportCanvas.toBlob((blob) => {
       if (!blob) return;
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
-      link.download = `mesa-${template.id}.png`;
+      link.download = transparent ? `mesa-${current.id}-sin-fondo.png` : `mesa-${current.id}.png`;
       link.click();
       URL.revokeObjectURL(url);
-      setSaved(true);
-      window.setTimeout(() => setSaved(false), 1600);
+      setSaved(transparent ? "corte" : "escena");
+      window.setTimeout(() => setSaved(null), 1600);
     }, "image/png");
   }
 
@@ -210,26 +248,37 @@ export function Studio() {
     const screen = screenOf(templateId);
     const inside =
       x >= screen.x && y >= screen.y && x <= screen.x + screen.w && y <= screen.y + screen.h;
-    if (!inside) return;
-    canvas.setPointerCapture(event.pointerId);
-    drag.current = { x: event.clientX, y: event.clientY, panX: pan.x, panY: pan.y };
+    if (inside) {
+      canvas.setPointerCapture(event.pointerId);
+      gesture.current = { kind: "pan", x: event.clientX, y: event.clientY, panX: pan.x, panY: pan.y };
+      return;
+    }
+    if (template.dimensional) {
+      canvas.setPointerCapture(event.pointerId);
+      gesture.current = { kind: "orbit", x: event.clientX, y: event.clientY, yaw, pitch };
+    }
   }
 
   function pointerMove(event: React.PointerEvent<HTMLCanvasElement>) {
     const canvas = canvasRef.current;
-    const start = drag.current;
-    if (!canvas || !start) return;
-    const bounds = canvas.getBoundingClientRect();
-    const sx = canvas.width / bounds.width;
-    const sy = canvas.height / bounds.height;
-    setPan({
-      x: start.panX + (event.clientX - start.x) * sx,
-      y: start.panY + (event.clientY - start.y) * sy,
-    });
+    const current = gesture.current;
+    if (!canvas || !current) return;
+    if (current.kind === "pan") {
+      const bounds = canvas.getBoundingClientRect();
+      const sx = canvas.width / bounds.width;
+      const sy = canvas.height / bounds.height;
+      setPan({
+        x: current.panX + (event.clientX - current.x) * sx,
+        y: current.panY + (event.clientY - current.y) * sy,
+      });
+      return;
+    }
+    setYaw(Math.min(36, Math.max(-36, current.yaw + (event.clientX - current.x) * 0.15)));
+    setPitch(Math.min(28, Math.max(-24, current.pitch + (event.clientY - current.y) * 0.12)));
   }
 
   function pointerUp() {
-    drag.current = null;
+    gesture.current = null;
   }
 
   return (
@@ -237,17 +286,35 @@ export function Studio() {
       <header className="head flex items-center justify-between gap-3 border-b border-rule bg-sheet px-4 py-3">
         <div className="min-w-0">
           <h1 className="mark text-3xl text-ink">Mesa</h1>
-          <p className="text-sm text-mute">Sube una foto. Elige el marco. Descarga.</p>
+          <p className="truncate text-sm text-mute">Sección, modelo y PNG.</p>
         </div>
-        <button type="button" className="btn btn-primary shrink-0" onClick={download} disabled={!image}>
-          <Download className="size-4" aria-hidden="true" />
-          {saved ? "Listo" : "Descargar"}
-        </button>
+        <div className="flex shrink-0 gap-2">
+          <button type="button" className="btn" onClick={() => download(true)} disabled={!image}>
+            {saved === "corte" ? "Listo" : "Sin fondo"}
+          </button>
+          <button type="button" className="btn btn-primary" onClick={() => download(false)} disabled={!image}>
+            <Download className="size-4" aria-hidden="true" />
+            {saved === "escena" ? "Listo" : "Descargar"}
+          </button>
+        </div>
       </header>
 
       <nav className="catalog" aria-label="Marcos">
+        <div className="section-tabs" role="tablist" aria-label="Secciones">
+          {GROUPS.map((group) => (
+            <button
+              key={group}
+              type="button"
+              role="tab"
+              aria-selected={section === group}
+              onClick={() => chooseSection(group)}
+            >
+              {group}
+            </button>
+          ))}
+        </div>
         {GROUPS.map((group) => (
-          <div className="group" key={group}>
+          <div className={section === group ? "group group-open" : "group"} key={group}>
             <p className="group-label">{group}</p>
             <div className="group-items">
               {TEMPLATES.filter((item) => item.group === group).map((item) => (
@@ -267,9 +334,7 @@ export function Studio() {
                   />
                   <span>
                     <strong>{item.name}</strong>
-                    <em>
-                      {item.w}×{item.h}
-                    </em>
+                    <em>{item.dimensional ? "Modelo 3D" : "Modelo"}</em>
                   </span>
                 </button>
               ))}
@@ -296,6 +361,7 @@ export function Studio() {
         <canvas
           ref={canvasRef}
           role="img"
+          className={cut ? "is-cut" : undefined}
           aria-label={`Mockup ${template.name}`}
           onPointerDown={pointerDown}
           onPointerMove={pointerMove}
@@ -390,6 +456,14 @@ export function Studio() {
                 {item.label}
               </button>
             ))}
+            <button
+              type="button"
+              className="chip"
+              aria-pressed={cut}
+              onClick={() => setCut((value) => !value)}
+            >
+              Ver sin fondo
+            </button>
           </div>
         </div>
 
@@ -413,12 +487,64 @@ export function Studio() {
           </div>
         ) : null}
 
+        {template.dimensional ? (
+          <div className="span-2">
+            <span className="field-label">Volumen</span>
+            <div className="chips" role="group" aria-label="Ángulo del modelo">
+              <button
+                type="button"
+                className="chip"
+                aria-pressed={yaw === 26 && pitch === 14}
+                onClick={() => {
+                  setYaw(26);
+                  setPitch(14);
+                }}
+              >
+                Ángulo
+              </button>
+              <button
+                type="button"
+                className="chip"
+                aria-pressed={yaw === 0 && pitch === 0}
+                onClick={() => {
+                  setYaw(0);
+                  setPitch(0);
+                }}
+              >
+                Plano
+              </button>
+            </div>
+            <span className="field-label mt-3">
+              Giro <span className="tabular-nums">{Math.round(yaw)}°</span>
+            </span>
+            <input
+              type="range"
+              min={-36}
+              max={36}
+              value={Math.round(yaw)}
+              aria-label="Giro"
+              onChange={(event) => setYaw(Number(event.target.value))}
+            />
+            <span className="field-label mt-3">
+              Inclinación <span className="tabular-nums">{Math.round(pitch)}°</span>
+            </span>
+            <input
+              type="range"
+              min={-24}
+              max={28}
+              value={Math.round(pitch)}
+              aria-label="Inclinación"
+              onChange={(event) => setPitch(Number(event.target.value))}
+            />
+          </div>
+        ) : null}
+
         <p className="span-2 text-sm text-mute">
-          {template.note}. Arrastra dentro del marco para encuadrar. La rueda hace zoom. Exporta a{" "}
-          <span className="tabular-nums">
-            {template.w}×{template.h}
-          </span>{" "}
-          px.
+          {template.note}.{" "}
+          {template.dimensional
+            ? "Arrastra la pantalla para encuadrar y el cuerpo para girar el modelo."
+            : "Arrastra dentro del marco para encuadrar."}{" "}
+          La rueda hace zoom. Descarga el PNG con la escena o sin fondo.
         </p>
       </aside>
     </div>

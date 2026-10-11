@@ -1,7 +1,7 @@
 export type SceneId = "papel" | "estudio" | "tinta" | "blanco";
 export type FinishId = "grafito" | "plata" | "arena";
 export type FitMode = "cover" | "contain";
-export type GroupId = "Dispositivos" | "Pantalla" | "Impresión";
+export type GroupId = "Celulares" | "Tabletas" | "Equipos" | "Impresión";
 
 export type Rect = { x: number; y: number; w: number; h: number; r: number };
 
@@ -12,6 +12,7 @@ export type Template = {
   w: number;
   h: number;
   hardware: boolean;
+  dimensional: boolean;
   note: string;
 };
 
@@ -54,6 +55,9 @@ export type RenderOptions = {
   finish: FinishId;
   art: ArtState;
   quiet?: boolean;
+  transparent?: boolean;
+  yaw?: number;
+  pitch?: number;
 };
 
 type Layout = {
@@ -115,6 +119,7 @@ function softShadow(
   ry: number,
   alpha: number,
 ) {
+  if (skipScene) return;
   const steps = 7;
   for (let i = steps; i >= 1; i--) {
     const t = i / steps;
@@ -133,7 +138,10 @@ function softShadow(
   }
 }
 
+let skipScene = false;
+
 function paintScene(ctx: CanvasRenderingContext2D, w: number, h: number, scene: SceneId) {
+  if (skipScene) return;
   const [a, b] = SCENE_STOPS[scene];
   const g = ctx.createRadialGradient(w * 0.5, h * 0.38, w * 0.05, w * 0.5, h * 0.55, w * 0.78);
   g.addColorStop(0, a);
@@ -254,82 +262,364 @@ function paintBody(
   ctx.restore();
 }
 
-function phoneLayout(landscape: boolean): { w: number; h: number; body: Rect; screen: Rect } {
-  if (!landscape) {
-    const w = 980;
-    const h = 1760;
-    const bw = 620;
-    const bh = 1300;
-    const x = (w - bw) / 2;
-    const y = (h - bh) / 2 - 10;
-    const inset = 16;
-    return {
-      w,
-      h,
-      body: { x, y, w: bw, h: bh, r: 92 },
-      screen: {
-        x: x + inset,
-        y: y + inset,
-        w: bw - inset * 2,
-        h: bh - inset * 2,
-        r: 78,
-      },
-    };
+type Cutout = "isla" | "perla" | "clasico" | "nada";
+
+type PhoneSpec = {
+  id: string;
+  name: string;
+  note: string;
+  landscape: boolean;
+  bw: number;
+  bh: number;
+  radius: number;
+  bezel: number;
+  depth: number;
+  cutout: Cutout;
+  chin: number;
+  fold: boolean;
+};
+
+const PHONES: PhoneSpec[] = [
+  {
+    id: "isla",
+    name: "Isla",
+    note: "Bisel fino e isla flotante, con canto en volumen",
+    landscape: false,
+    bw: 640,
+    bh: 1320,
+    radius: 98,
+    bezel: 14,
+    depth: 248,
+    cutout: "isla",
+    chin: 0,
+    fold: false,
+  },
+  {
+    id: "perla",
+    name: "Perla",
+    note: "Perforación central y canto más redondo",
+    landscape: false,
+    bw: 660,
+    bh: 1340,
+    radius: 76,
+    bezel: 22,
+    depth: 256,
+    cutout: "perla",
+    chin: 8,
+    fold: false,
+  },
+  {
+    id: "clasico",
+    name: "Clásico",
+    note: "Mentón ancho y botón circular",
+    landscape: false,
+    bw: 700,
+    bh: 1380,
+    radius: 58,
+    bezel: 34,
+    depth: 220,
+    cutout: "clasico",
+    chin: 86,
+    fold: false,
+  },
+  {
+    id: "compacto",
+    name: "Compacto",
+    note: "Cuerpo corto, el mismo volumen",
+    landscape: false,
+    bw: 600,
+    bh: 1160,
+    radius: 90,
+    bezel: 16,
+    depth: 236,
+    cutout: "isla",
+    chin: 0,
+    fold: false,
+  },
+  {
+    id: "pliegue",
+    name: "Pliegue",
+    note: "Pantalla ancha con pliegue al centro",
+    landscape: false,
+    bw: 900,
+    bh: 1180,
+    radius: 42,
+    bezel: 16,
+    depth: 210,
+    cutout: "nada",
+    chin: 0,
+    fold: true,
+  },
+  {
+    id: "paisaje",
+    name: "Paisaje",
+    note: "Isla en horizontal",
+    landscape: true,
+    bw: 1320,
+    bh: 640,
+    radius: 98,
+    bezel: 14,
+    depth: 248,
+    cutout: "isla",
+    chin: 0,
+    fold: false,
+  },
+];
+
+function phoneGeometry(spec: PhoneSpec) {
+  const marginX = spec.landscape ? 260 : 230;
+  const marginY = spec.landscape ? 230 : 290;
+  const w = spec.bw + marginX * 2;
+  const h = spec.bh + marginY * 2;
+  const x = (w - spec.bw) / 2;
+  const y = (h - spec.bh) / 2 - (spec.landscape ? 0 : 8);
+  const body: Rect = { x, y, w: spec.bw, h: spec.bh, r: spec.radius };
+  const screen: Rect = {
+    x: x + spec.bezel,
+    y: y + spec.bezel,
+    w: spec.bw - spec.bezel * 2,
+    h: spec.bh - spec.bezel * 2 - spec.chin,
+    r: Math.max(12, spec.radius - spec.bezel * 0.85),
+  };
+  return { w, h, body, screen };
+}
+
+function clampNum(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function mixHex(a: string, b: string, t: number) {
+  const parse = (hex: string) => [
+    Number.parseInt(hex.slice(1, 3), 16),
+    Number.parseInt(hex.slice(3, 5), 16),
+    Number.parseInt(hex.slice(5, 7), 16),
+  ];
+  const pa = parse(a);
+  const pb = parse(b);
+  const u = clampNum(t, 0, 1);
+  const c = pa.map((v, i) => Math.round(v + (pb[i]! - v) * u));
+  return `rgb(${c[0]}, ${c[1]}, ${c[2]})`;
+}
+
+function outline(rect: Rect, steps = 7) {
+  const r = Math.max(0, Math.min(rect.r, rect.w / 2, rect.h / 2));
+  const pts: { x: number; y: number }[] = [];
+  if (r < 1) {
+    return [
+      { x: rect.x, y: rect.y },
+      { x: rect.x + rect.w, y: rect.y },
+      { x: rect.x + rect.w, y: rect.y + rect.h },
+      { x: rect.x, y: rect.y + rect.h },
+    ];
   }
-  const w = 1760;
-  const h = 980;
-  const bw = 1300;
-  const bh = 620;
-  const x = (w - bw) / 2;
-  const y = (h - bh) / 2 + 6;
-  const inset = 16;
+  const corners = [
+    { cx: rect.x + rect.w - r, cy: rect.y + r, a0: -Math.PI / 2, a1: 0 },
+    { cx: rect.x + rect.w - r, cy: rect.y + rect.h - r, a0: 0, a1: Math.PI / 2 },
+    { cx: rect.x + r, cy: rect.y + rect.h - r, a0: Math.PI / 2, a1: Math.PI },
+    { cx: rect.x + r, cy: rect.y + r, a0: Math.PI, a1: Math.PI * 1.5 },
+  ];
+  for (const corner of corners) {
+    for (let i = 0; i < steps; i++) {
+      const a = corner.a0 + ((corner.a1 - corner.a0) * i) / steps;
+      pts.push({
+        x: corner.cx + Math.cos(a) * r,
+        y: corner.cy + Math.sin(a) * r,
+      });
+    }
+  }
+  return pts;
+}
+
+function poseOffset(opts: RenderOptions, depth: number) {
+  const yaw = clampNum(opts.yaw ?? 26, -36, 36);
+  const pitch = clampNum(opts.pitch ?? 14, -24, 28);
   return {
-    w,
-    h,
-    body: { x, y, w: bw, h: bh, r: 92 },
-    screen: {
-      x: x + inset,
-      y: y + inset,
-      w: bw - inset * 2,
-      h: bh - inset * 2,
-      r: 78,
-    },
+    dx: Math.sin((yaw * Math.PI) / 180) * depth,
+    dy: -Math.sin((pitch * Math.PI) / 180) * depth,
   };
 }
 
-function drawPhone(ctx: CanvasRenderingContext2D, opts: RenderOptions, landscape: boolean) {
-  const { w, h, body, screen } = phoneLayout(landscape);
+function drawShell(
+  ctx: CanvasRenderingContext2D,
+  body: Rect,
+  dx: number,
+  dy: number,
+  finish: Finish,
+) {
+  const pts = outline(body);
+  for (let i = 0; i < pts.length; i++) {
+    const p0 = pts[i]!;
+    const p1 = pts[(i + 1) % pts.length]!;
+    const ex = p1.x - p0.x;
+    const ey = p1.y - p0.y;
+    if (ex * ex + ey * ey < 0.4) continue;
+    const facing = ey * dx - ex * dy;
+    if (facing <= 0) continue;
+    const len = Math.hypot(ey, -ex) || 1;
+    const light = Math.max(0, (ey / len) * -0.45 + (-ex / len) * -0.9);
+    const near = mixHex(finish.lo, "#0c0b0a", 0.4);
+    const far = light > 0.45 ? finish.hi : mixHex(finish.lo, finish.hi, 0.55 + light);
+    const shade = ctx.createLinearGradient(p0.x, p0.y, p0.x + dx, p0.y + dy);
+    shade.addColorStop(0, near);
+    shade.addColorStop(0.7, finish.lo);
+    shade.addColorStop(1, far);
+    ctx.beginPath();
+    ctx.moveTo(p0.x, p0.y);
+    ctx.lineTo(p1.x, p1.y);
+    ctx.lineTo(p1.x + dx, p1.y + dy);
+    ctx.lineTo(p0.x + dx, p0.y + dy);
+    ctx.closePath();
+    ctx.fillStyle = shade;
+    ctx.fill();
+    ctx.strokeStyle = finish.edge;
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.moveTo(p0.x + dx, p0.y + dy);
+    ctx.lineTo(p1.x + dx, p1.y + dy);
+    ctx.stroke();
+  }
+}
+
+function railButton(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  dx: number,
+  dy: number,
+  length: number,
+  alongY: boolean,
+) {
+  const t0 = 0.34;
+  const t1 = 0.78;
+  ctx.beginPath();
+  if (alongY) {
+    ctx.moveTo(x + dx * t0, y + dy * t0);
+    ctx.lineTo(x + dx * t1, y + dy * t1);
+    ctx.lineTo(x + dx * t1, y + length + dy * t1);
+    ctx.lineTo(x + dx * t0, y + length + dy * t0);
+  } else {
+    ctx.moveTo(x + dx * t0, y + dy * t0);
+    ctx.lineTo(x + dx * t1, y + dy * t1);
+    ctx.lineTo(x + length + dx * t1, y + dy * t1);
+    ctx.lineTo(x + length + dx * t0, y + dy * t0);
+  }
+  ctx.closePath();
+  ctx.fill();
+}
+
+function drawRails(
+  ctx: CanvasRenderingContext2D,
+  spec: PhoneSpec,
+  body: Rect,
+  dx: number,
+  dy: number,
+  finish: Finish,
+) {
+  ctx.fillStyle = finish.button;
+  if (!spec.landscape && dx < -10) {
+    railButton(ctx, body.x, body.y + body.h * 0.18, dx, dy, body.h * 0.07, true);
+    railButton(ctx, body.x, body.y + body.h * 0.27, dx, dy, body.h * 0.11, true);
+  } else if (!spec.landscape && dx > 10) {
+    railButton(ctx, body.x + body.w, body.y + body.h * 0.22, dx, dy, body.h * 0.12, true);
+  } else if (spec.landscape && dy < -10) {
+    railButton(ctx, body.x + body.w * 0.18, body.y, dx, dy, body.w * 0.07, false);
+    railButton(ctx, body.x + body.w * 0.27, body.y, dx, dy, body.w * 0.11, false);
+  } else if (spec.landscape && dy > 10) {
+    railButton(ctx, body.x + body.w * 0.22, body.y + body.h, dx, dy, body.w * 0.12, false);
+  }
+}
+
+function drawCutout(
+  ctx: CanvasRenderingContext2D,
+  spec: PhoneSpec,
+  screen: Rect,
+) {
+  ctx.fillStyle = "#070706";
+  if (spec.cutout === "isla") {
+    if (!spec.landscape) {
+      const iw = 126;
+      const ih = 36;
+      const ix = screen.x + (screen.w - iw) / 2;
+      const iy = screen.y + 18;
+      fillRound(ctx, ix, iy, iw, ih, 18);
+      ctx.fillStyle = "#10202c";
+      ctx.beginPath();
+      ctx.arc(ix + iw - 20, iy + ih / 2, 8, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#1d3c52";
+      ctx.beginPath();
+      ctx.arc(ix + iw - 20, iy + ih / 2, 3.5, 0, Math.PI * 2);
+      ctx.fill();
+    } else {
+      const iw = 36;
+      const ih = 126;
+      const ix = screen.x + 18;
+      const iy = screen.y + (screen.h - ih) / 2;
+      fillRound(ctx, ix, iy, iw, ih, 18);
+      ctx.fillStyle = "#10202c";
+      ctx.beginPath();
+      ctx.arc(ix + iw / 2, iy + ih - 20, 8, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    return;
+  }
+  if (spec.cutout === "perla") {
+    const cx = spec.landscape ? screen.x + 28 : screen.x + screen.w / 2;
+    const cy = spec.landscape ? screen.y + screen.h / 2 : screen.y + 30;
+    ctx.beginPath();
+    ctx.arc(cx, cy, 13, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#10202c";
+    ctx.beginPath();
+    ctx.arc(cx, cy, 6, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+function drawPhone(ctx: CanvasRenderingContext2D, opts: RenderOptions, spec: PhoneSpec) {
+  const { w, h, body, screen } = phoneGeometry(spec);
   const finish = FINISH[opts.finish];
+  const { dx, dy } = poseOffset(opts, spec.depth);
   paintScene(ctx, w, h, opts.scene);
   softShadow(
     ctx,
-    body.x + body.w / 2,
-    body.y + body.h - 8,
-    body.w * 0.38,
-    26,
+    body.x + body.w / 2 + dx * 0.28,
+    body.y + body.h + 16,
+    body.w * 0.36,
+    24,
     shadowAlpha(opts.scene),
   );
-  ctx.fillStyle = finish.button;
-  if (!landscape) {
-    fillRound(ctx, body.x - 5, body.y + 210, 6, 64, 2);
-    fillRound(ctx, body.x - 5, body.y + 292, 6, 96, 2);
-    fillRound(ctx, body.x + body.w - 1, body.y + 250, 6, 120, 2);
-  } else {
-    fillRound(ctx, body.x + 210, body.y - 5, 64, 6, 2);
-    fillRound(ctx, body.x + 292, body.y - 5, 96, 6, 2);
-    fillRound(ctx, body.x + 250, body.y + body.h - 1, 120, 6, 2);
-  }
+  drawShell(ctx, body, dx, dy, finish);
+  drawRails(ctx, spec, body, dx, dy, finish);
   paintBody(ctx, body, finish);
+  if (spec.cutout === "clasico" && !spec.landscape) {
+    const cx = body.x + body.w / 2;
+    const cy = body.y + body.h - spec.chin * 0.48;
+    ctx.beginPath();
+    ctx.arc(cx, cy, 22, 0, Math.PI * 2);
+    ctx.strokeStyle = finish.edge;
+    ctx.lineWidth = 4;
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(cx, cy, 8, 0, Math.PI * 2);
+    ctx.fillStyle = finish.button;
+    ctx.fill();
+  }
   ctx.fillStyle = finish.bezel;
   fillRound(ctx, screen.x - 2, screen.y - 2, screen.w + 4, screen.h + 4, screen.r + 2);
   drawArt(ctx, screen, opts.art, opts.quiet);
-  glass(ctx, screen);
-  ctx.fillStyle = "#070706";
-  if (!landscape) {
-    fillRound(ctx, screen.x + (screen.w - 124) / 2, screen.y + 16, 124, 36, 18);
-  } else {
-    fillRound(ctx, screen.x + 16, screen.y + (screen.h - 124) / 2, 36, 124, 18);
+  if (spec.fold) {
+    const cx = screen.x + screen.w / 2;
+    const crease = ctx.createLinearGradient(cx - 14, 0, cx + 14, 0);
+    crease.addColorStop(0, "rgba(0,0,0,0)");
+    crease.addColorStop(0.48, "rgba(0,0,0,0.28)");
+    crease.addColorStop(0.52, "rgba(255,252,247,0.16)");
+    crease.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.fillStyle = crease;
+    ctx.fillRect(cx - 14, screen.y, 28, screen.h);
   }
+  drawCutout(ctx, spec, screen);
+  glass(ctx, screen);
 }
 
 function laptopLayout() {
@@ -755,8 +1045,10 @@ function billboardLayout() {
 function drawBillboard(ctx: CanvasRenderingContext2D, opts: RenderOptions) {
   const { w, h, panel, screen } = billboardLayout();
   paintScene(ctx, w, h, opts.scene);
-  ctx.fillStyle = opts.scene === "tinta" ? "#2a2723" : "#d9d2c4";
-  ctx.fillRect(0, h - 180, w, 180);
+  if (!opts.transparent) {
+    ctx.fillStyle = opts.scene === "tinta" ? "#2a2723" : "#d9d2c4";
+    ctx.fillRect(0, h - 180, w, 180);
+  }
   ctx.fillStyle = "#3a3632";
   ctx.fillRect(panel.x + 110, panel.y + panel.h, 16, h - panel.y - panel.h - 40);
   ctx.fillRect(panel.x + panel.w - 126, panel.y + panel.h, 16, h - panel.y - panel.h - 40);
@@ -807,17 +1099,23 @@ function drawFrame(ctx: CanvasRenderingContext2D, opts: RenderOptions) {
   drawArt(ctx, screen, opts.art, opts.quiet);
 }
 
-const LAYOUTS: Record<string, Layout> = {
-  celular: {
-    ...sizeOf(phoneLayout(false)),
-    screen: phoneLayout(false).screen,
-    draw: (ctx, opts) => drawPhone(ctx, opts, false),
-  },
-  "celular-horizontal": {
-    ...sizeOf(phoneLayout(true)),
-    screen: phoneLayout(true).screen,
-    draw: (ctx, opts) => drawPhone(ctx, opts, true),
-  },
+function sizeOf(box: { w: number; h: number }) {
+  return { w: box.w, h: box.h };
+}
+
+const LAYOUTS: Record<string, Layout> = {};
+
+for (const spec of PHONES) {
+  const geo = phoneGeometry(spec);
+  LAYOUTS[spec.id] = {
+    w: geo.w,
+    h: geo.h,
+    screen: geo.screen,
+    draw: (ctx, opts) => drawPhone(ctx, opts, spec),
+  };
+}
+
+Object.assign(LAYOUTS, {
   tableta: {
     ...sizeOf(tabletLayout()),
     screen: tabletLayout().screen,
@@ -878,33 +1176,106 @@ const LAYOUTS: Record<string, Layout> = {
     screen: frameLayout().screen,
     draw: drawFrame,
   },
-};
+} satisfies Record<string, Layout>);
 
-function sizeOf(box: { w: number; h: number }) {
-  return { w: box.w, h: box.h };
+const META: Record<string, Omit<Template, "id" | "w" | "h">> = {};
+
+for (const spec of PHONES) {
+  META[spec.id] = {
+    name: spec.name,
+    group: "Celulares",
+    hardware: true,
+    dimensional: true,
+    note: spec.note,
+  };
 }
 
-const META: Record<string, Omit<Template, "id" | "w" | "h">> = {
-  celular: { name: "Celular", group: "Dispositivos", hardware: true, note: "Marco vertical con isla" },
-  "celular-horizontal": {
-    name: "Celular horizontal",
-    group: "Dispositivos",
+Object.assign(META, {
+  tableta: {
+    name: "Losa",
+    group: "Tabletas",
     hardware: true,
-    note: "El mismo teléfono, de lado",
+    dimensional: false,
+    note: "Tableta vertical, bisel fino",
   },
-  tableta: { name: "Tableta", group: "Dispositivos", hardware: true, note: "Bisel fino, vertical" },
-  portatil: { name: "Portátil", group: "Dispositivos", hardware: true, note: "Pantalla y teclado" },
-  monitor: { name: "Monitor", group: "Dispositivos", hardware: true, note: "Escritorio con base" },
-  navegador: { name: "Navegador", group: "Pantalla", hardware: false, note: "Ventana de escritorio" },
-  poster: { name: "Póster", group: "Impresión", hardware: false, note: "Hoja con margen y cinta" },
-  tarjeta: { name: "Tarjeta", group: "Impresión", hardware: false, note: "Tarjeta sobre mesa" },
-  revista: { name: "Revista", group: "Impresión", hardware: false, note: "Página derecha del pliego" },
-  hoja: { name: "Hoja", group: "Impresión", hardware: false, note: "Impresión a sangre contenida" },
-  libro: { name: "Libro", group: "Impresión", hardware: false, note: "Cubierta con lomo" },
-  periodico: { name: "Periódico", group: "Impresión", hardware: false, note: "Portada con foto central" },
-  espectacular: { name: "Espectacular", group: "Impresión", hardware: false, note: "Anuncio exterior" },
-  marco: { name: "Marco", group: "Impresión", hardware: false, note: "Moldura de galería" },
-};
+  portatil: {
+    name: "Portátil",
+    group: "Equipos",
+    hardware: true,
+    dimensional: false,
+    note: "Pantalla y teclado",
+  },
+  monitor: {
+    name: "Monitor",
+    group: "Equipos",
+    hardware: true,
+    dimensional: false,
+    note: "Escritorio con base",
+  },
+  navegador: {
+    name: "Navegador",
+    group: "Equipos",
+    hardware: false,
+    dimensional: false,
+    note: "Ventana de escritorio",
+  },
+  poster: {
+    name: "Póster",
+    group: "Impresión",
+    hardware: false,
+    dimensional: false,
+    note: "Hoja con margen y cinta",
+  },
+  tarjeta: {
+    name: "Tarjeta",
+    group: "Impresión",
+    hardware: false,
+    dimensional: false,
+    note: "Tarjeta sobre mesa",
+  },
+  revista: {
+    name: "Revista",
+    group: "Impresión",
+    hardware: false,
+    dimensional: false,
+    note: "Página derecha del pliego",
+  },
+  hoja: {
+    name: "Hoja",
+    group: "Impresión",
+    hardware: false,
+    dimensional: false,
+    note: "Impresión a sangre contenida",
+  },
+  libro: {
+    name: "Libro",
+    group: "Impresión",
+    hardware: false,
+    dimensional: false,
+    note: "Cubierta con lomo",
+  },
+  periodico: {
+    name: "Periódico",
+    group: "Impresión",
+    hardware: false,
+    dimensional: false,
+    note: "Portada con foto central",
+  },
+  espectacular: {
+    name: "Espectacular",
+    group: "Impresión",
+    hardware: false,
+    dimensional: false,
+    note: "Anuncio exterior",
+  },
+  marco: {
+    name: "Marco",
+    group: "Impresión",
+    hardware: false,
+    dimensional: false,
+    note: "Moldura de galería",
+  },
+} satisfies Record<string, Omit<Template, "id" | "w" | "h">>);
 
 export const TEMPLATES: Template[] = Object.keys(META).map((id) => {
   const layout = LAYOUTS[id];
@@ -912,7 +1283,7 @@ export const TEMPLATES: Template[] = Object.keys(META).map((id) => {
   return { id, w: layout.w, h: layout.h, ...META[id] };
 });
 
-export const GROUPS: GroupId[] = ["Dispositivos", "Pantalla", "Impresión"];
+export const GROUPS: GroupId[] = ["Celulares", "Tabletas", "Equipos", "Impresión"];
 
 export function screenOf(id: string): Rect {
   return LAYOUTS[id]?.screen ?? { x: 0, y: 0, w: 1, h: 1, r: 0 };
@@ -921,9 +1292,13 @@ export function screenOf(id: string): Rect {
 export function renderMockup(ctx: CanvasRenderingContext2D, id: string, opts: RenderOptions) {
   const layout = LAYOUTS[id];
   if (!layout) return;
+  const previous = skipScene;
+  skipScene = !!opts.transparent;
   ctx.save();
+  ctx.clearRect(0, 0, layout.w, layout.h);
   layout.draw(ctx, opts);
   ctx.restore();
+  skipScene = previous;
 }
 
 export function templateById(id: string): Template {
