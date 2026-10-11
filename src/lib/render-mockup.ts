@@ -283,7 +283,7 @@ const PHONES: PhoneSpec[] = [
   {
     id: "isla",
     name: "Isla",
-    note: "Bisel fino e isla flotante, con canto en volumen",
+    note: "Marco de metal y cristal. Gíralo, acércalo y cambia la perspectiva",
     landscape: false,
     bw: 640,
     bh: 1320,

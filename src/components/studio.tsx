@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { PhoneStage, type PhoneStageHandle } from "@/components/phone-stage";
+import { DEFAULT_POSE, drawPhoneThumb, type PhonePose } from "@/lib/phone-view";
 import { Download, RotateCcw, Upload } from "lucide-react";
 import {
   GROUPS,
@@ -40,8 +42,9 @@ export function Studio() {
   const [fit, setFit] = useState<FitMode>("cover");
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
-  const [yaw, setYaw] = useState(26);
-  const [pitch, setPitch] = useState(14);
+  const [pose, setPose] = useState<PhonePose>(DEFAULT_POSE);
+  const [poseRev, setPoseRev] = useState(0);
+  const [viewMode, setViewMode] = useState<"girar" | "encuadrar">("girar");
   const [cut, setCut] = useState(false);
   const [image, setImage] = useState<HTMLImageElement | null>(null);
   const [imageName, setImageName] = useState("Patio");
@@ -55,11 +58,8 @@ export function Studio() {
   const stageRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const thumbs = useRef<Record<string, HTMLCanvasElement | null>>({});
-  const gesture = useRef<
-    | { kind: "pan"; x: number; y: number; panX: number; panY: number }
-    | { kind: "orbit"; x: number; y: number; yaw: number; pitch: number }
-    | null
-  >(null);
+  const phoneRef = useRef<PhoneStageHandle>(null);
+  const gesture = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null);
 
   const template = templateById(templateId);
 
@@ -88,17 +88,23 @@ export function Studio() {
       scene,
       finish,
       transparent: cut,
-      yaw,
-      pitch,
       art: { image, zoom, panX: pan.x, panY: pan.y, fit },
     });
     fitCanvas();
-  }, [templateId, scene, finish, zoom, pan, image, fit, yaw, pitch, cut, fontTick, fitCanvas]);
+  }, [templateId, scene, finish, zoom, pan, image, fit, cut, fontTick, fitCanvas]);
 
   useEffect(() => {
     for (const item of TEMPLATES) {
       const thumb = thumbs.current[item.id];
       if (!thumb) continue;
+      if (item.dimensional) {
+        const ctx = thumb.getContext("2d");
+        if (!ctx) continue;
+        thumb.width = 180;
+        thumb.height = 220;
+        drawPhoneThumb(ctx, item.id, finish, image);
+        continue;
+      }
       const scale = 200 / item.w;
       thumb.width = Math.max(1, Math.round(item.w * scale));
       thumb.height = Math.max(1, Math.round(item.h * scale));
@@ -108,13 +114,11 @@ export function Studio() {
       renderMockup(ctx, item.id, {
         scene,
         finish,
-        yaw,
-        pitch,
         quiet: true,
         art: { image, zoom: 1, panX: 0, panY: 0, fit: "cover" },
       });
     }
-  }, [image, scene, finish, yaw, pitch, fontTick]);
+  }, [image, scene, finish, fontTick]);
 
   useEffect(() => {
     const stage = stageRef.current;
@@ -208,33 +212,42 @@ export function Studio() {
     img.src = url;
   }
 
-  function download(transparent: boolean) {
+  async function download(transparent: boolean) {
     if (!image) return;
     const current = templateById(templateId);
-    const exportCanvas = document.createElement("canvas");
-    exportCanvas.width = current.w;
-    exportCanvas.height = current.h;
-    const ctx = exportCanvas.getContext("2d");
-    if (!ctx) return;
-    renderMockup(ctx, current.id, {
-      scene,
-      finish,
-      transparent,
-      yaw,
-      pitch,
-      art: { image, zoom, panX: pan.x, panY: pan.y, fit },
-    });
-    exportCanvas.toBlob((blob) => {
-      if (!blob) return;
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = transparent ? `mesa-${current.id}-sin-fondo.png` : `mesa-${current.id}.png`;
-      link.click();
-      URL.revokeObjectURL(url);
-      setSaved(transparent ? "corte" : "escena");
-      window.setTimeout(() => setSaved(null), 1600);
-    }, "image/png");
+    const blob = current.dimensional
+      ? await phoneRef.current?.capture(transparent)
+      : await new Promise<Blob | null>((resolve) => {
+          const exportCanvas = document.createElement("canvas");
+          exportCanvas.width = current.w;
+          exportCanvas.height = current.h;
+          const ctx = exportCanvas.getContext("2d");
+          if (!ctx) {
+            resolve(null);
+            return;
+          }
+          renderMockup(ctx, current.id, {
+            scene,
+            finish,
+            transparent,
+            art: { image, zoom, panX: pan.x, panY: pan.y, fit },
+          });
+          exportCanvas.toBlob((value) => resolve(value), "image/png");
+        });
+    if (!blob) return;
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = transparent ? `mesa-${current.id}-sin-fondo.png` : `mesa-${current.id}.png`;
+    link.click();
+    URL.revokeObjectURL(url);
+    setSaved(transparent ? "corte" : "escena");
+    window.setTimeout(() => setSaved(null), 1600);
+  }
+
+  function aim(partial: Partial<PhonePose>) {
+    setPose((prev) => ({ ...prev, ...partial }));
+    setPoseRev((n) => n + 1);
   }
 
   function pointerDown(event: React.PointerEvent<HTMLCanvasElement>) {
@@ -248,33 +261,22 @@ export function Studio() {
     const screen = screenOf(templateId);
     const inside =
       x >= screen.x && y >= screen.y && x <= screen.x + screen.w && y <= screen.y + screen.h;
-    if (inside) {
-      canvas.setPointerCapture(event.pointerId);
-      gesture.current = { kind: "pan", x: event.clientX, y: event.clientY, panX: pan.x, panY: pan.y };
-      return;
-    }
-    if (template.dimensional) {
-      canvas.setPointerCapture(event.pointerId);
-      gesture.current = { kind: "orbit", x: event.clientX, y: event.clientY, yaw, pitch };
-    }
+    if (!inside) return;
+    canvas.setPointerCapture(event.pointerId);
+    gesture.current = { x: event.clientX, y: event.clientY, panX: pan.x, panY: pan.y };
   }
 
   function pointerMove(event: React.PointerEvent<HTMLCanvasElement>) {
     const canvas = canvasRef.current;
     const current = gesture.current;
     if (!canvas || !current) return;
-    if (current.kind === "pan") {
-      const bounds = canvas.getBoundingClientRect();
-      const sx = canvas.width / bounds.width;
-      const sy = canvas.height / bounds.height;
-      setPan({
-        x: current.panX + (event.clientX - current.x) * sx,
-        y: current.panY + (event.clientY - current.y) * sy,
-      });
-      return;
-    }
-    setYaw(Math.min(36, Math.max(-36, current.yaw + (event.clientX - current.x) * 0.15)));
-    setPitch(Math.min(28, Math.max(-24, current.pitch + (event.clientY - current.y) * 0.12)));
+    const bounds = canvas.getBoundingClientRect();
+    const sx = canvas.width / bounds.width;
+    const sy = canvas.height / bounds.height;
+    setPan({
+      x: current.panX + (event.clientX - current.x) * sx,
+      y: current.panY + (event.clientY - current.y) * sy,
+    });
   }
 
   function pointerUp() {
@@ -334,7 +336,7 @@ export function Studio() {
                   />
                   <span>
                     <strong>{item.name}</strong>
-                    <em>{item.dimensional ? "Modelo 3D" : "Modelo"}</em>
+                    <em>{item.dimensional ? "Gira y acerca" : "Modelo"}</em>
                   </span>
                 </button>
               ))}
@@ -358,17 +360,40 @@ export function Studio() {
           if (file) useFile(file);
         }}
       >
-        <canvas
-          ref={canvasRef}
-          role="img"
-          className={cut ? "is-cut" : undefined}
-          aria-label={`Mockup ${template.name}`}
-          onPointerDown={pointerDown}
-          onPointerMove={pointerMove}
-          onPointerUp={pointerUp}
-          onPointerCancel={pointerUp}
-          onDoubleClick={resetFrame}
-        />
+        {template.dimensional ? (
+          <PhoneStage
+            ref={phoneRef}
+            modelId={template.id}
+            finish={finish}
+            scene={scene}
+            cut={cut}
+            image={image}
+            fit={fit}
+            zoom={zoom}
+            pan={pan}
+            pose={pose}
+            poseRev={poseRev}
+            mode={viewMode}
+            onPose={setPose}
+            onFrame={(frame) => {
+              setPan(frame.pan);
+              setZoom(frame.zoom);
+            }}
+            className={cut ? "is-cut" : undefined}
+          />
+        ) : (
+          <canvas
+            ref={canvasRef}
+            role="img"
+            className={cut ? "is-cut" : undefined}
+            aria-label={`Mockup ${template.name}`}
+            onPointerDown={pointerDown}
+            onPointerMove={pointerMove}
+            onPointerUp={pointerUp}
+            onPointerCancel={pointerUp}
+            onDoubleClick={resetFrame}
+          />
+        )}
       </div>
 
       <aside className="inspector">
@@ -489,52 +514,80 @@ export function Studio() {
 
         {template.dimensional ? (
           <div className="span-2">
-            <span className="field-label">Volumen</span>
-            <div className="chips" role="group" aria-label="Ángulo del modelo">
+            <span className="field-label">Teléfono</span>
+            <div className="segment" role="group" aria-label="Modo del teléfono">
+              <button type="button" aria-pressed={viewMode === "girar"} onClick={() => setViewMode("girar")}>
+                Girar
+              </button>
               <button
                 type="button"
-                className="chip"
-                aria-pressed={yaw === 26 && pitch === 14}
-                onClick={() => {
-                  setYaw(26);
-                  setPitch(14);
-                }}
+                aria-pressed={viewMode === "encuadrar"}
+                onClick={() => setViewMode("encuadrar")}
               >
+                Encuadrar
+              </button>
+            </div>
+            <div className="chips mt-3" role="group" aria-label="Vistas">
+              <button type="button" className="chip" onClick={() => aim(DEFAULT_POSE)}>
                 Ángulo
+              </button>
+              <button type="button" className="chip" onClick={() => aim({ yaw: 0, pitch: 0, closeness: 0.34, fov: 26 })}>
+                Frente
               </button>
               <button
                 type="button"
                 className="chip"
-                aria-pressed={yaw === 0 && pitch === 0}
-                onClick={() => {
-                  setYaw(0);
-                  setPitch(0);
-                }}
+                onClick={() => aim({ yaw: 180, pitch: 16, closeness: 0.4, fov: 32 })}
               >
-                Plano
+                Espalda
+              </button>
+              <button type="button" className="chip" onClick={() => aim({ closeness: 0.86, fov: 22 })}>
+                Acercar
               </button>
             </div>
             <span className="field-label mt-3">
-              Giro <span className="tabular-nums">{Math.round(yaw)}°</span>
+              Giro <span className="tabular-nums">{Math.round(pose.yaw)}°</span>
             </span>
             <input
               type="range"
-              min={-36}
-              max={36}
-              value={Math.round(yaw)}
+              min={-180}
+              max={180}
+              value={Math.round(pose.yaw)}
               aria-label="Giro"
-              onChange={(event) => setYaw(Number(event.target.value))}
+              onChange={(event) => aim({ yaw: Number(event.target.value) })}
             />
             <span className="field-label mt-3">
-              Inclinación <span className="tabular-nums">{Math.round(pitch)}°</span>
+              Inclinación <span className="tabular-nums">{Math.round(pose.pitch)}°</span>
             </span>
             <input
               type="range"
-              min={-24}
-              max={28}
-              value={Math.round(pitch)}
+              min={-70}
+              max={70}
+              value={Math.round(pose.pitch)}
               aria-label="Inclinación"
-              onChange={(event) => setPitch(Number(event.target.value))}
+              onChange={(event) => aim({ pitch: Number(event.target.value) })}
+            />
+            <span className="field-label mt-3">
+              Acercar <span className="tabular-nums">{Math.round(pose.closeness * 100)}</span>
+            </span>
+            <input
+              type="range"
+              min={0}
+              max={100}
+              value={Math.round(pose.closeness * 100)}
+              aria-label="Acercar el teléfono"
+              onChange={(event) => aim({ closeness: Number(event.target.value) / 100 })}
+            />
+            <span className="field-label mt-3">
+              Perspectiva <span className="tabular-nums">{Math.round(pose.fov)}°</span>
+            </span>
+            <input
+              type="range"
+              min={18}
+              max={62}
+              value={Math.round(pose.fov)}
+              aria-label="Perspectiva"
+              onChange={(event) => aim({ fov: Number(event.target.value) })}
             />
           </div>
         ) : null}
@@ -542,9 +595,9 @@ export function Studio() {
         <p className="span-2 text-sm text-mute">
           {template.note}.{" "}
           {template.dimensional
-            ? "Arrastra la pantalla para encuadrar y el cuerpo para girar el modelo."
-            : "Arrastra dentro del marco para encuadrar."}{" "}
-          La rueda hace zoom. Descarga el PNG con la escena o sin fondo.
+            ? "Arrastra para girar el marco. La rueda o el pellizco lo acercan. Encuadrar mueve la foto dentro del cristal."
+            : "Arrastra dentro del marco para encuadrar. La rueda hace zoom."}{" "}
+          Descarga el PNG con la escena o sin fondo.
         </p>
       </aside>
     </div>
