@@ -282,8 +282,8 @@ type PhoneSpec = {
 const PHONES: PhoneSpec[] = [
   {
     id: "isla",
-    name: "Isla",
-    note: "Marco de metal y cristal. Gíralo, acércalo y cambia la perspectiva",
+    name: "Pastilla",
+    note: "Canto plano, pastilla en el cristal y bloque de cámara en la esquina",
     landscape: false,
     bw: 640,
     bh: 1320,
@@ -296,8 +296,8 @@ const PHONES: PhoneSpec[] = [
   },
   {
     id: "perla",
-    name: "Perla",
-    note: "Perforación central y canto más redondo",
+    name: "Barra",
+    note: "Orificio al centro y barra de cámara en la espalda",
     landscape: false,
     bw: 660,
     bh: 1340,

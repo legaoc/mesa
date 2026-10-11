@@ -13,6 +13,7 @@ export type PhonePose = {
 export const DEFAULT_POSE: PhonePose = { yaw: 32, pitch: 18, closeness: 0.42, fov: 30 };
 
 export type PhoneCutout = "isla" | "perla" | "clasico" | "nada";
+export type PhoneBack = "esquina" | "barra" | "centro";
 
 export type PhoneSpec = {
   id: string;
@@ -23,17 +24,19 @@ export type PhoneSpec = {
   bezel: number;
   chin: number;
   cutout: PhoneCutout;
+  back: PhoneBack;
+  buttons: "split" | "right";
   fold: boolean;
   lenses: number;
 };
 
 export const PHONE_SPECS: Record<string, PhoneSpec> = {
-  isla: { id: "isla", w: 0.74, h: 1.56, t: 0.084, r: 0.13, bezel: 0.02, chin: 0.02, cutout: "isla", fold: false, lenses: 2 },
-  perla: { id: "perla", w: 0.76, h: 1.58, t: 0.09, r: 0.1, bezel: 0.032, chin: 0.034, cutout: "perla", fold: false, lenses: 3 },
-  clasico: { id: "clasico", w: 0.75, h: 1.5, t: 0.098, r: 0.07, bezel: 0.046, chin: 0.13, cutout: "clasico", fold: false, lenses: 1 },
-  compacto: { id: "compacto", w: 0.67, h: 1.36, t: 0.086, r: 0.12, bezel: 0.02, chin: 0.02, cutout: "isla", fold: false, lenses: 1 },
-  pliegue: { id: "pliegue", w: 1.2, h: 1.4, t: 0.072, r: 0.055, bezel: 0.018, chin: 0.018, cutout: "nada", fold: true, lenses: 2 },
-  paisaje: { id: "paisaje", w: 1.56, h: 0.74, t: 0.084, r: 0.13, bezel: 0.02, chin: 0.02, cutout: "isla", fold: false, lenses: 2 },
+  isla: { id: "isla", w: 0.72, h: 1.54, t: 0.074, r: 0.108, bezel: 0.012, chin: 0.012, cutout: "isla", back: "esquina", buttons: "split", fold: false, lenses: 2 },
+  perla: { id: "perla", w: 0.73, h: 1.58, t: 0.078, r: 0.072, bezel: 0.016, chin: 0.016, cutout: "perla", back: "barra", buttons: "right", fold: false, lenses: 3 },
+  clasico: { id: "clasico", w: 0.75, h: 1.5, t: 0.098, r: 0.07, bezel: 0.046, chin: 0.13, cutout: "clasico", back: "centro", buttons: "split", fold: false, lenses: 1 },
+  compacto: { id: "compacto", w: 0.66, h: 1.34, t: 0.076, r: 0.1, bezel: 0.012, chin: 0.012, cutout: "isla", back: "esquina", buttons: "split", fold: false, lenses: 2 },
+  pliegue: { id: "pliegue", w: 1.2, h: 1.4, t: 0.072, r: 0.055, bezel: 0.014, chin: 0.014, cutout: "nada", back: "barra", buttons: "right", fold: true, lenses: 3 },
+  paisaje: { id: "paisaje", w: 1.54, h: 0.72, t: 0.074, r: 0.108, bezel: 0.012, chin: 0.012, cutout: "isla", back: "esquina", buttons: "split", fold: false, lenses: 2 },
 };
 
 const BACKDROP: Record<SceneId, number> = {
@@ -107,6 +110,23 @@ function faceGeometry(key: string, w: number, h: number, r: number) {
   const cached = geos.get(id);
   if (cached) return cached;
   const geo = new THREE.ShapeGeometry(roundedShape(w, h, r), 8);
+  const pos = geo.getAttribute("position");
+  const uv = geo.getAttribute("uv");
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (let i = 0; i < pos.count; i++) {
+    minX = Math.min(minX, pos.getX(i));
+    maxX = Math.max(maxX, pos.getX(i));
+    minY = Math.min(minY, pos.getY(i));
+    maxY = Math.max(maxY, pos.getY(i));
+  }
+  const spanX = maxX - minX || 1;
+  const spanY = maxY - minY || 1;
+  for (let i = 0; i < pos.count; i++) {
+    uv.setXY(i, (pos.getX(i) - minX) / spanX, (pos.getY(i) - minY) / spanY);
+  }
   geos.set(id, geo);
   return geo;
 }
@@ -503,7 +523,7 @@ function buildPhone(spec: PhoneSpec, finish: FinishId, screenTex: THREE.Texture)
   const screenY = spec.chin / 2;
   const screen = new THREE.Mesh(
     faceGeometry("screen", screenW, screenH, Math.max(0.012, spec.r - spec.bezel)),
-    new THREE.MeshBasicMaterial({ map: screenTex }),
+    new THREE.MeshBasicMaterial({ map: screenTex, toneMapped: false }),
   );
   screen.position.set(0, screenY, spec.t / 2 + 0.003);
   group.add(screen);
@@ -515,7 +535,7 @@ function buildPhone(spec: PhoneSpec, finish: FinishId, screenTex: THREE.Texture)
       metalness: 0,
       roughness: 0.04,
       transparent: true,
-      opacity: 0.16,
+      opacity: 0.07,
       clearcoat: 1,
       depthWrite: false,
     }),
@@ -558,7 +578,7 @@ function buildPhone(spec: PhoneSpec, finish: FinishId, screenTex: THREE.Texture)
   }
 
   addRails(group, spec, metal);
-  addCamera(group, spec, backMat, metal);
+  addCamera(group, spec, backMat);
   return group;
 }
 
@@ -585,63 +605,82 @@ function lensMesh(radius: number) {
 }
 
 function addRails(group: THREE.Group, spec: PhoneSpec, metal: THREE.Material) {
-  const buttonMat = metal;
-  const z = 0;
   const rail = (x: number, y: number, w: number, h: number, d: number) => {
-    const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), buttonMat);
-    mesh.position.set(x, y, z);
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), metal);
+    mesh.position.set(x, y, 0);
     group.add(mesh);
   };
-  const side = spec.w / 2 + 0.004;
+  const side = spec.w / 2 + 0.0035;
   if (spec.w > spec.h) {
-    rail(-spec.w * 0.18, spec.h / 2 + 0.004, spec.w * 0.08, 0.008, 0.02);
-    rail(-spec.w * 0.04, spec.h / 2 + 0.004, spec.w * 0.12, 0.008, 0.02);
-    rail(spec.w * 0.2, -spec.h / 2 - 0.004, spec.w * 0.14, 0.008, 0.02);
+    rail(-spec.w * 0.18, spec.h / 2 + 0.004, spec.w * 0.08, 0.007, 0.018);
+    rail(spec.w * 0.22, -spec.h / 2 - 0.004, spec.w * 0.12, 0.007, 0.018);
     return;
   }
-  rail(-side, spec.h * 0.16, 0.008, spec.h * 0.07, 0.022);
-  rail(-side, spec.h * 0.28, 0.008, spec.h * 0.12, 0.022);
-  rail(side, spec.h * 0.22, 0.008, spec.h * 0.14, 0.022);
+  if (spec.buttons === "right") {
+    rail(side, spec.h * 0.08, 0.007, spec.h * 0.11, 0.02);
+    rail(side, spec.h * 0.24, 0.007, spec.h * 0.07, 0.02);
+    return;
+  }
+  rail(-side, spec.h * 0.12, 0.007, spec.h * 0.06, 0.02);
+  rail(-side, spec.h * 0.24, 0.007, spec.h * 0.1, 0.02);
+  rail(side, spec.h * 0.2, 0.007, spec.h * 0.12, 0.02);
 }
 
-function addCamera(group: THREE.Group, spec: PhoneSpec, backMat: THREE.Material, metal: THREE.Material) {
+function addCamera(group: THREE.Group, spec: PhoneSpec, backMat: THREE.Material) {
   const wide = spec.w > spec.h;
-  const bw = wide ? 0.28 : 0.25;
-  const bh = wide ? 0.25 : 0.3;
-  const bump = new THREE.Mesh(plateGeometry(`bump-${spec.id}`, bw, bh, 0.04, 0.012), backMat);
-  const x = wide ? -spec.w / 2 + 0.24 : 0;
-  const y = wide ? spec.h / 2 - 0.2 : spec.h / 2 - 0.26;
-  bump.position.set(x, y, -spec.t / 2 - 0.008);
+  let bw = 0.26;
+  let bh = 0.26;
+  let x = 0;
+  let y = spec.h / 2 - 0.24;
+  let spots: Array<[number, number]> = [[0, 0]];
+  if (spec.back === "esquina") {
+    bw = wide ? 0.22 : 0.3;
+    bh = wide ? 0.3 : 0.32;
+    x = wide ? -spec.w / 2 + 0.22 : -spec.w / 2 + bw / 2 + 0.045;
+    y = wide ? spec.h / 2 - 0.2 : spec.h / 2 - bh / 2 - 0.05;
+    spots = [
+      [0, 0.055],
+      [0, -0.055],
+    ];
+  } else if (spec.back === "barra") {
+    bw = wide ? 0.42 : spec.w * 0.78;
+    bh = wide ? 0.16 : 0.15;
+    x = 0;
+    y = wide ? 0 : spec.h / 2 - 0.16;
+    spots = [
+      [-bw * 0.28, 0],
+      [0, 0],
+      [bw * 0.28, 0],
+    ];
+  } else {
+    bw = 0.22;
+    bh = 0.22;
+    x = spec.w * 0.18;
+    y = spec.h / 2 - 0.22;
+    spots = [[0, 0]];
+  }
+  const bump = new THREE.Mesh(plateGeometry(`bump-${spec.id}`, bw, bh, Math.min(bh, bw) * 0.22, 0.01), backMat);
+  bump.position.set(x, y, -spec.t / 2 - 0.007);
   group.add(bump);
-  const spots =
-    spec.lenses >= 3
-      ? [
-          [-0.05, 0.05],
-          [0.05, 0.05],
-          [0, -0.05],
-        ]
-      : spec.lenses === 2
-        ? [
-            [-0.045, 0.02],
-            [0.045, -0.02],
-          ]
-        : [[0, 0]];
   for (const [ox, oy] of spots) {
-    const lens = lensMesh(spec.lenses === 1 ? 0.045 : 0.032);
-    lens.position.set(x + (ox ?? 0), y + (oy ?? 0), -spec.t / 2 - 0.016);
+    const lens = lensMesh(spec.back === "barra" ? 0.028 : spec.lenses === 1 ? 0.042 : 0.034);
+    lens.position.set(x + ox, y + oy, -spec.t / 2 - 0.014);
     group.add(lens);
   }
   const flash = new THREE.Mesh(
-    new THREE.CircleGeometry(0.01, 16),
+    new THREE.CircleGeometry(0.009, 16),
     new THREE.MeshStandardMaterial({
       color: 0xfff4d2,
       emissive: 0xffe2a8,
-      emissiveIntensity: 0.4,
-      metalness: metal ? 0 : 0,
+      emissiveIntensity: 0.35,
       roughness: 0.3,
     }),
   );
-  flash.position.set(x + bw * 0.28, y - bh * 0.28, -spec.t / 2 - 0.015);
+  flash.position.set(
+    spec.back === "barra" ? x + bw * 0.42 : x + bw * 0.28,
+    spec.back === "barra" ? y : y - bh * 0.22,
+    -spec.t / 2 - 0.013,
+  );
   flash.rotation.y = Math.PI;
   group.add(flash);
 }
