@@ -127,6 +127,7 @@ function faceGeometry(key: string, w: number, h: number, r: number) {
   for (let i = 0; i < pos.count; i++) {
     uv.setXY(i, (pos.getX(i) - minX) / spanX, (pos.getY(i) - minY) / spanY);
   }
+  uv.needsUpdate = true;
   geos.set(id, geo);
   return geo;
 }
@@ -480,12 +481,17 @@ export class PhoneView {
   }
 }
 
+function faceOffset(spec: PhoneSpec) {
+  return spec.t / 2 + Math.min(0.01, spec.t * 0.18);
+}
+
 function buildPhone(spec: PhoneSpec, finish: FinishId, screenTex: THREE.Texture) {
   const group = new THREE.Group();
   const metal = metalMaterial(finish);
   const body = new THREE.Mesh(plateGeometry("body", spec.w, spec.h, spec.r, spec.t), metal);
   group.add(body);
 
+  const front = faceOffset(spec);
   const lip = 0.007;
   const glassMat = new THREE.MeshPhysicalMaterial({
     color: 0x070708,
@@ -499,7 +505,7 @@ function buildPhone(spec: PhoneSpec, finish: FinishId, screenTex: THREE.Texture)
     faceGeometry("front", spec.w - lip * 2, spec.h - lip * 2, Math.max(0.02, spec.r - lip)),
     glassMat,
   );
-  frontGlass.position.z = spec.t / 2 + 0.001;
+  frontGlass.position.z = front + 0.001;
   group.add(frontGlass);
 
   const backMat = new THREE.MeshPhysicalMaterial({
@@ -514,7 +520,7 @@ function buildPhone(spec: PhoneSpec, finish: FinishId, screenTex: THREE.Texture)
     faceGeometry("back", spec.w - lip * 2, spec.h - lip * 2, Math.max(0.02, spec.r - lip)),
     backMat,
   );
-  back.position.z = -spec.t / 2 - 0.001;
+  back.position.z = -front - 0.001;
   back.rotation.y = Math.PI;
   group.add(back);
 
@@ -523,9 +529,9 @@ function buildPhone(spec: PhoneSpec, finish: FinishId, screenTex: THREE.Texture)
   const screenY = spec.chin / 2;
   const screen = new THREE.Mesh(
     faceGeometry("screen", screenW, screenH, Math.max(0.012, spec.r - spec.bezel)),
-    new THREE.MeshBasicMaterial({ map: screenTex, toneMapped: false }),
+    new THREE.MeshBasicMaterial({ map: screenTex, toneMapped: false, side: THREE.DoubleSide }),
   );
-  screen.position.set(0, screenY, spec.t / 2 + 0.003);
+  screen.position.set(0, screenY, front + 0.003);
   group.add(screen);
 
   const sheen = new THREE.Mesh(
@@ -540,10 +546,10 @@ function buildPhone(spec: PhoneSpec, finish: FinishId, screenTex: THREE.Texture)
       depthWrite: false,
     }),
   );
-  sheen.position.set(0, screenY, spec.t / 2 + 0.004);
+  sheen.position.set(0, screenY, front + 0.004);
   group.add(sheen);
 
-  const zFront = spec.t / 2 + 0.008;
+  const zFront = front + 0.008;
   if (spec.cutout === "isla") {
     const wide = !spec.fold && spec.w > spec.h;
     const island = new THREE.Mesh(
@@ -573,7 +579,7 @@ function buildPhone(spec: PhoneSpec, finish: FinishId, screenTex: THREE.Texture)
       new THREE.BoxGeometry(0.003, screenH * 0.96, 0.001),
       new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.35 }),
     );
-    crease.position.set(0, screenY, spec.t / 2 + 0.006);
+    crease.position.set(0, screenY, front + 0.006);
     group.add(crease);
   }
 
@@ -659,12 +665,13 @@ function addCamera(group: THREE.Group, spec: PhoneSpec, backMat: THREE.Material)
     y = spec.h / 2 - 0.22;
     spots = [[0, 0]];
   }
+  const backZ = -faceOffset(spec);
   const bump = new THREE.Mesh(plateGeometry(`bump-${spec.id}`, bw, bh, Math.min(bh, bw) * 0.22, 0.01), backMat);
-  bump.position.set(x, y, -spec.t / 2 - 0.007);
+  bump.position.set(x, y, backZ - 0.008);
   group.add(bump);
   for (const [ox, oy] of spots) {
     const lens = lensMesh(spec.back === "barra" ? 0.028 : spec.lenses === 1 ? 0.042 : 0.034);
-    lens.position.set(x + ox, y + oy, -spec.t / 2 - 0.014);
+    lens.position.set(x + ox, y + oy, backZ - 0.016);
     group.add(lens);
   }
   const flash = new THREE.Mesh(
@@ -679,7 +686,7 @@ function addCamera(group: THREE.Group, spec: PhoneSpec, backMat: THREE.Material)
   flash.position.set(
     spec.back === "barra" ? x + bw * 0.42 : x + bw * 0.28,
     spec.back === "barra" ? y : y - bh * 0.22,
-    -spec.t / 2 - 0.013,
+    backZ - 0.014,
   );
   flash.rotation.y = Math.PI;
   group.add(flash);
